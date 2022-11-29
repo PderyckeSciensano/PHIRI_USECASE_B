@@ -1,0 +1,499 @@
+---
+title: "Use Case B: Exploring delays in breast cancer treatment during the COVID pandemic"
+author: ""
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, 
+                      warning = FALSE, 
+                      message = FALSE,
+                      out.width = "100%")
+```
+
+## Use Case B on delayes in breast cancer treatment during the COVID pandemic ##
+Health Systems across Europe had to reorganise healthcare services reallocating resources towards providing complex assistance to COVID-19 patients. COVID-19 surge of cases during the different epidemic waves requiring intensive care has lead countries to cancel or postpone non-urgent care (i.e. elective surgery). This use case will seek to elicit whether there has been an increase in time to treatment in women diagnosed with breast cancer in the month previous to the lockdown measures, as compared with the woman diagnosed with breast cancer before that period and whether the distribution of this delay could be influenced by the healthcare reorganisation measures due to the COVID pandemic.  
+
+
+### LOCAL ANALYSES ###
+This analyses corresponds with the local part of the analysis (country-specific). 
+Please, provide feedback on your outputs, both data quality analysis (EDA), HTML report and aggregated output to the Use Case B leaders to complete the overall analyses.
+
+
+</br>
+</br>
+
+```{r package_installation_if_needed}
+# install.packages("tidyverse")
+# install.packages("purrr")
+# install.packages("patchwork")
+# install.packages("mgcv")
+# install.packages("broom")
+# install.packages("modelsummary")
+# install.packages("lubridate")
+# install.packages("tidyr")
+# install.packages("janitor")
+# install.packages("plotly")
+# install.packages("zoo")
+# install.packages("tsibble")
+```
+
+
+```{r load_libraries}
+## 3. Load required libraries ####
+library(tidyverse)
+library(lubridate)
+library(janitor)
+library(plotly)
+# library(tsibble)
+# library(tidyr)
+# library(purrr)
+# library(patchwork)
+# library(mgcv)
+# library(broom)
+
+warning = function(x, options) {
+     paste('\n\n<div class="alert alert-warning">',
+           gsub('##', '\n', gsub('^##\ Warning:', '**Warning**', x)),
+           '</div>', sep = '\n')
+}
+
+
+calculate_socecon_lvl_ratio <- function(df) {
+  
+  p1 <- 
+    df %>%
+    group_by(period) %>%
+    count(socecon_lvl_cd) %>%
+    pivot_wider(id_cols = period, names_from = socecon_lvl_cd, values_from = n) 
+  
+  if(!("5" %in% colnames(p1)))
+  {
+    p1$`5` <- NA
+  }
+  if(!("4" %in% colnames(p1)))
+  {
+    p1$`4` <- NA
+  }
+  if(!("3" %in% colnames(p1)))
+  {
+    p1$`3` <- NA
+  }
+  if(!("2" %in% colnames(p1)))
+  {
+    p1$`2` <- NA
+  }
+  if(!("1" %in% colnames(p1)))
+  {
+    p1$`1` <- NA
+  }
+  # p1 <- p1 %>% mutate(ratio = dplyr::coalesce(`1`,`2`,`3`,`4`,`5`) / dplyr::coalesce(`5`,`4`,`3`,`2`,`1`))
+  p1 <- p1 %>% mutate(ratio = `1` /  sum(c(`5`,`4`,`3`,`2`),  na.rm=T))
+  return(p1)
+}
+
+```
+
+
+```{r load_data}
+## Load the data for analysis 
+df <- read_csv("usecaseB_synthetic.csv")
+
+```
+
+
+```{r}
+
+max_num_periods <- as.numeric(difftime(strptime(today(), format = "%Y-%m-%d"),strptime("2017-01-01", format = "%Y-%m-%d"),units="weeks"))
+max_num_periods <- round(max_num_periods/4)
+
+year <- 2017
+period <- 1
+
+month_names <-
+  c("Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec")
+
+month_breaks <- c()
+year_month_names <- c()
+
+range <- 1:max_num_periods
+for (period in range) {
+  
+  month_n <- period%%12
+  if(month_n == 0){ month_n <- 12}
+  year_m <- paste0(year,'-',as.character(month_names[month_n]))
+  if (period %% 12 == 6) {
+    month_breaks <- c(month_breaks,period)
+    year_month_names <- c(year_month_names,year_m)
+  }
+  if (period %% 12 == 1) {
+    month_breaks <- c(month_breaks,period)
+    year_month_names <- c(year_month_names,year_m)
+  }
+  if (period %% 12 == 0) {
+    year <- 2017 + round(period/12) 
+  }
+}
+year_month_names <- year_month_names[1:max(df$period,na.rm = TRUE)]
+month_breaks <- month_breaks[1:max(df$period,na.rm = TRUE)]
+
+```
+
+
+
+```{r}
+## 
+p1 <- df %>% 
+  count(period) %>% 
+  ggplot(aes(x = period, y = n)) +
+  geom_line() +
+  geom_smooth(method = "loess") +
+  labs(
+    title = "Absolute number of women with breast cancer ",
+    subtitle = "Treated monthly during the period of study (2017-2020)",
+    x = "Months (from 2017-01 to 2020-12)",
+    y = "Women treated each month"
+  ) + expand_limits(y = 0) +
+  scale_x_continuous(name = "Month", breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  theme_minimal() 
+
+
+ggplotly(p1) %>%
+  layout(title = list(text = paste0('Absolute number of women with breast cancer',
+                                    '<br>',
+                                    '<sup>',
+                                    '*Loess regression',
+                                    '</sup>')))
+
+```
+
+</br>
+
+```{r}
+## Calculate the ratio of most to least deprived women with breast cancer treated in the period of study
+
+highest_socecon_lvl <- length(levels(factor(df$socecon_lvl_cd)))
+highest_socecon_lvl <- `highest_socecon_lvl`
+
+if(!is.na(highest_socecon_lvl) && highest_socecon_lvl!=0 ){
+  
+  
+  p1 <- calculate_socecon_lvl_ratio(df)
+  
+  
+  p1 <- p1 %>% 
+    ggplot() +
+    geom_line(aes(x = period, y = ratio)) +
+    geom_smooth(aes(x = period, y = ratio, method = "loess")) +
+    labs(title = "Ratio of most to least deprived (Women with breast cancer)",
+       y= "Ratio most deprived / any socioeconomic level",
+       x= "Time")  +
+    expand_limits(x = 0, y = 0) +
+    scale_x_continuous(name = "Month", breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+    theme_minimal()
+    
+  ggplotly(p1)  %>%
+  layout(title = list(text = paste0('Ratio of most to least deprived (Women with breast cancer)',
+                                    '<br>',
+                                    '<sup>',
+                                    '*Loess regression',
+                                    '</sup>')))
+  }
+
+```
+
+`r if(is.na(highest_socecon_lvl) || highest_socecon_lvl==0 ){ warning("Warning: No information available on 'socecon_lvl_cd'") }`
+
+</br>
+</br>
+
+## Exploratory Analysis (`r glue::glue(unique(df$country_cd)[1])`)
+### Distribution of times from diagnosis to treatment for breast cancer patients
+```{r boxplots1}
+surgery_df <- df %>% 
+  filter(!is.na(time_dx_to_surgery_nm))
+
+if(nrow(surgery_df) > 0){
+p1 <- surgery_df %>% 
+  ggplot() +
+  geom_boxplot(aes(x = period, y = time_dx_to_surgery_nm, group = period)) +
+  scale_x_continuous(name = "Month of treatment", breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  labs(title = "Monthly interval distribution from diagnosis to surgery (boxplots)",
+       y = "Delay from diagnosis to first treatment (days)") + 
+  theme_minimal()
+
+ggplotly(p1)}
+```
+
+`r if(nrow(surgery_df) == 0){ warning("Warning: No information available on 'time_dx_to_surgery_nm'") }`
+
+</br>
+</br>
+
+```{r boxplots2}
+
+radio_df <- df %>% 
+  filter(!is.na(time_dx_to_radiotherapy_nm))
+if(nrow(radio_df) > 0){
+p1 <- radio_df %>% 
+  ggplot() +
+  geom_boxplot(aes(x = period, y = time_dx_to_radiotherapy_nm, group = period)) +
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  labs(title = "Monthly interval distribution from diagnosis to radiotherapy (boxplots)",
+       y = "Delay from diagnosis to first treatment (days)") + 
+  theme_minimal()
+
+ggplotly(p1)}
+```
+
+`r if(nrow(radio_df) == 0){ warning("Warning: No information available on 'time_dx_to_radiotherapy_nm'") }`
+
+</br>
+</br>
+
+```{r boxplots3}
+chemo_df <- df %>% 
+  filter(!is.na(time_dx_to_chemotherapy_nm))
+if(nrow(chemo_df) > 0){
+p1 <-  chemo_df %>% 
+  ggplot() +
+  geom_boxplot(aes(x = period, y = time_dx_to_chemotherapy_nm, group = period)) +
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  labs(title = "Monthly interval distribution from diagnosis to chemotherapy (boxplots)",
+       y = "Delay from diagnosis to first treatment (days)") + 
+  theme_minimal()
+
+ggplotly(p1)}
+```
+
+`r if(nrow(chemo_df) == 0){ warning("Warning: No information available on 'time_dx_to_chemotherapy_nm'") }`
+
+</br>
+</br>
+
+```{r boxplots4}
+
+hormo_df <- df %>% 
+  filter(!is.na(time_dx_to_hormonotherapy_nm))
+if(nrow(hormo_df) > 0){
+p1 <- hormo_df %>% 
+  ggplot() +
+  geom_boxplot(aes(x = period, y = time_dx_to_hormonotherapy_nm, group = period)) +
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+    labs(title = "Monthly interval distribution from diagnosis to hormonotherapy (boxplots)",
+       y = "Delay from diagnosis to first treatment (days)") + 
+  theme_minimal()
+
+ggplotly(p1)}
+```
+
+`r if(nrow(hormo_df) == 0){ warning("Warning: No information available on 'time_dx_to_hormonotherapy_nm'") }`
+
+</br>
+</br>
+
+```{r boxplots5}
+
+immuno_df <- df %>% 
+  filter(!is.na(time_dx_to_immunotherapy_nm))
+if(nrow(immuno_df) > 0){
+p1 <- immuno_df %>% 
+  ggplot() +
+  geom_boxplot(aes(x = period, y = time_dx_to_immunotherapy_nm, group = period)) +
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  labs(title = "Monthly interval distribution from diagnosis to immunotherapy (boxplots)",
+       y = "Delay from diagnosis to first treatment (days)") + 
+  theme_minimal()
+
+ggplotly(p1)}
+
+```
+
+`r if(nrow(immuno_df) == 0){ warning("Warning: No information available on 'time_dx_to_immunotherapy_nm'") }`
+
+</br>
+</br>
+
+```{r median_times_trends}
+
+if(nrow(surgery_df) > 0){
+p1 <- df %>% 
+  filter(!is.na(time_dx_to_surgery_nm)) %>% 
+  group_by(period) %>% 
+  mutate(median_time_to_surgery = median(time_dx_to_surgery_nm, na.rm = TRUE)) %>% 
+  ggplot(aes(x = period, y = median_time_to_surgery)) + 
+  geom_line() + 
+  geom_smooth(method = "loess") +
+  geom_vline(aes(xintercept = 39, text = "2020-Apr"), col = "red", lty = "dashed") + 
+  expand_limits(y = 0) +
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  labs(title = "Median monthly interval from diagnosis to surgery",
+       y = "Median delay to first treatment (days)") +
+  theme_minimal()
+
+ggplotly(p1) %>%
+  layout(title = list(text = paste0('Median monthly interval from diagnosis to surgery',
+                                    '<br>',
+                                    '<sup>',
+                                    '*Loess regression',
+                                    '</sup>')))
+
+}
+
+```
+
+`r if(nrow(surgery_df) == 0){ warning("Warning: No information available on 'time_dx_to_surgery_nm'") }`
+
+</br>
+</br>
+
+```{r median_times_trends2}
+if(nrow(radio_df) > 0){
+p1 <- radio_df %>% 
+  group_by(period) %>% 
+  mutate(median_time_to_radiotherapy = median(time_dx_to_radiotherapy_nm, na.rm = TRUE)) %>% 
+  ggplot(aes(x = period, y = median_time_to_radiotherapy)) + 
+  geom_line() + 
+  geom_smooth(method = "loess") +
+  geom_vline(aes(xintercept = 39, text = "2020-Apr"), col = "red", lty = "dashed") + expand_limits(y = 0) +
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  labs(title = "Median monthly interval from diagnosis to radiotherapy",
+       y = "Median delay to first treatment (days)") +
+  theme_minimal()
+
+ggplotly(p1)%>%
+  layout(title = list(text = paste0('Median monthly interval from diagnosis to radiotherapy',
+                                    '<br>',
+                                    '<sup>',
+                                    '*Loess regression',
+                                    '</sup>')))
+
+}
+```
+
+`r if(nrow(radio_df) == 0){ warning("Warning: No information available on 'time_dx_to_radiotherapy_nm'") }`
+
+</br>
+</br>
+
+
+```{r median_times_trends3}
+if(nrow(chemo_df) > 0){
+p1 <- chemo_df %>% 
+  group_by(period) %>% 
+  mutate(median_time_to_chemotherapy = median(time_dx_to_chemotherapy_nm, na.rm = TRUE)) %>% 
+  ggplot(aes(x = period, y = median_time_to_chemotherapy)) + 
+  geom_line() + 
+  geom_smooth(method = "loess") +
+  geom_vline(aes(xintercept = 39, text = "2020-Apr"), col = "red", lty = "dashed") + 
+  expand_limits(y = 0) +
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  labs(title = "Median monthly interval from diagnosis to chemotherapy",
+       y = "Median delay to first treatment (days)") +
+  theme_minimal()
+
+ggplotly(p1)%>%
+  layout(title = list(text = paste0('Median monthly interval from diagnosis to chemotherapy',
+                                    '<br>',
+                                    '<sup>',
+                                    '*Loess regression',
+                                    '</sup>')))
+
+}
+
+```
+
+`r if(nrow(chemo_df) == 0){ warning("Warning: No information available on 'time_dx_to_chemotherapy_nm'") }`
+
+</br>
+</br>
+
+```{r median_times_trends4}
+if(nrow(hormo_df) > 0){
+p1 <- hormo_df %>% 
+  group_by(period) %>% 
+  mutate(median_time_to_hormonotherapy = median(time_dx_to_hormonotherapy_nm , na.rm = TRUE)) %>% 
+  ggplot(aes(x = period, y = median_time_to_hormonotherapy)) + 
+  geom_line() + 
+  geom_line(method = "loess") +
+  geom_vline(aes(xintercept = 39, text = "2020-Apr"), col = "red", lty = "dashed") + 
+  expand_limits(x = 0, y = 0) +
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) +
+  labs(title = "Median monthly interval from diagnosis to hormonotherapy",
+       y = "Median delay to first treatment (days)") +
+  theme_minimal()
+
+ggplotly(p1)}
+```
+
+`r if(nrow(hormo_df) == 0){ warning("Warning: No information available on 'time_dx_to_hormonotherapy_nm'") }`
+
+</br>
+</br>
+
+
+```{r median_times_trends5}
+if(nrow(immuno_df) > 0){
+p1 <- immuno_df %>% 
+  group_by(period) %>% 
+  mutate(median_time_to_immunotherapy = median(time_dx_to_immunotherapy_nm , na.rm = TRUE)) %>% 
+  ggplot(aes(x = period, y = time_dx_to_immunotherapy_nm)) + 
+  geom_line() + 
+  geom_line(method = "loess") +
+  geom_vline(aes(xintercept = 39, text = "2020-Apr"), col = "red", lty = "dashed") + 
+  scale_x_continuous(name = "Month of treatment", 
+                     breaks = month_breaks, labels = year_month_names, expand = c(0,0)) + 
+  expand_limits(x = 0, y = 0) +
+  labs(title = "Median monthly interval from diagnosis to immunotherapy for breast cancer",
+       y = "Median delay to first treatment (days)") +
+  theme_minimal()
+
+ggplotly(p1)}
+```
+
+`r if(nrow(immuno_df) == 0){ warning("Warning: No information available on 'time_dx_to_immunotherapy_nm'") }`
+
+</br>
+</br>
+
+```{r}
+
+df_period <- 
+  df %>% 
+  group_by(period) %>% 
+  summarise(
+    period = unique(period),
+    country_cd = unique(country_cd),
+    median_age = median(age_nm, na.rm = TRUE),
+    iqr_age = IQR(age_nm, na.rm = TRUE),
+    sd_age = sd(age_nm, na.rm = TRUE), 
+    prop_low_socecon_lvl = sum(socecon_lvl_cd)/nrow(.),
+    n_surgery = sum(!is.na(time_dx_to_surgery_nm)),
+    median_time_to_surgery = median(time_dx_to_surgery_nm, na.rm = TRUE),
+    iqr_time_to_surgery = IQR(time_dx_to_surgery_nm, na.rm = TRUE),
+    n_radiotherapy = sum(!is.na(time_dx_to_radiotherapy_nm)),
+    median_time_to_radio = median(time_dx_to_radiotherapy_nm, na.rm = TRUE),
+    iqr_time_to_radio = IQR(time_dx_to_radiotherapy_nm, na.rm = TRUE),
+    n_chemotherapy = sum(!is.na(time_dx_to_chemotherapy_nm)),
+    median_time_to_chemo = median(time_dx_to_chemotherapy_nm, na.rm = TRUE),
+    iqr_time_to_chemo = IQR(time_dx_to_chemotherapy_nm, na.rm = TRUE),
+    n_hormonotherapy = sum(!is.na(time_dx_to_hormonotherapy_nm)), 
+    median_time_to_hormones = median(time_dx_to_hormonotherapy_nm, na.rm = TRUE),
+    iqr_time_to_hormones = IQR(time_dx_to_hormonotherapy_nm, na.rm = TRUE),
+    n_immunotherapy = sum(!is.na(time_dx_to_immunotherapy_nm)),
+    median_time_to_immuno = median(time_dx_to_immunotherapy_nm, na.rm = TRUE), 
+    iqr_time_to_immuno = IQR(time_dx_to_immunotherapy_nm, na.rm = TRUE))
+
+write_csv(df_period, file = "aggregated_outputs_ucb.csv")
+
+```
+
